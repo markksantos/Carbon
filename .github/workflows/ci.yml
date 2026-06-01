@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build & Test
+    # macos-15 runners are Apple Silicon (arm64), matching Carbon's target.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        run: sudo xcode-select -switch /Applications/Xcode_16.app
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Build (debug)
+        run: swift build -v
+
+      - name: Run tests
+        run: swift test -v
+
+      - name: Build release binary
+        run: swift build -c release --arch arm64
+
+      - name: Assemble .app bundle
+        run: bash scripts/build-app.sh
+
+      - name: Upload Carbon.app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Carbon-app-unsigned
+          path: dist/Carbon.app
+          if-no-files-found: error

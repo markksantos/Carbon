@@ -10,6 +10,10 @@ DerivedData/
 .env
 .env.local
 .env.*.local
+# Build output (assembled .app bundle + generated icon)
+dist/
+Resources/AppIcon.icns
+
 # Environment variables
 .env
 .env.local
