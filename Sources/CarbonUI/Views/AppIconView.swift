@@ -3,6 +3,8 @@ import SwiftUI
 public struct AppIconView: View {
     let bundleIdentifier: String?
 
+    @MainActor private static let iconCache = NSCache<NSString, NSImage>()
+
     public init(bundleIdentifier: String?) {
         self.bundleIdentifier = bundleIdentifier
     }
@@ -22,9 +24,19 @@ public struct AppIconView: View {
 
     @MainActor
     private func resolveIcon() -> NSImage? {
-        guard let bundleId = bundleIdentifier,
-              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId)
-        else { return nil }
-        return NSWorkspace.shared.icon(forFile: url.path)
+        guard let bundleId = bundleIdentifier else { return nil }
+        let key = bundleId as NSString
+
+        if let cached = Self.iconCache.object(forKey: key) {
+            return cached
+        }
+
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
+            return nil
+        }
+
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        Self.iconCache.setObject(icon, forKey: key)
+        return icon
     }
 }

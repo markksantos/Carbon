@@ -5,21 +5,24 @@ import CarbonEngine
 public struct WeeklySummaryView: View {
     let dailyTotals: [DailyTotal]
     let carbonIntensity: Double
-
-    public init(dailyTotals: [DailyTotal], carbonIntensity: Double) {
-        self.dailyTotals = dailyTotals
-        self.carbonIntensity = carbonIntensity
-    }
+    @Bindable var viewModel: CarbonViewModel
+    @State private var showingReport = false
 
     private var totalWh: Double { dailyTotals.reduce(0) { $0 + $1.wattHours } }
     private var totalCO2: Double { dailyTotals.reduce(0) { $0 + $1.co2Grams } }
+
+    public init(dailyTotals: [DailyTotal], carbonIntensity: Double, viewModel: CarbonViewModel) {
+        self.dailyTotals = dailyTotals
+        self.carbonIntensity = carbonIntensity
+        self.viewModel = viewModel
+    }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Headline stats
             HStack {
                 StatBox(title: "Energy", value: CarbonCalculator.formatWh(totalWh))
-                StatBox(title: "CO₂", value: CarbonCalculator.formatCO2(totalCO2))
+                StatBox(title: "CO\u{2082}", value: CarbonCalculator.formatCO2(totalCO2))
             }
             .padding(.horizontal, 12)
 
@@ -27,6 +30,25 @@ public struct WeeklySummaryView: View {
             EnergyChartView(dailyTotals: dailyTotals)
                 .frame(height: 120)
                 .padding(.horizontal, 12)
+
+            // View Report button
+            Button {
+                Task {
+                    await viewModel.generateWeeklyReport()
+                    showingReport = true
+                }
+            } label: {
+                Text("View Report")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .padding(.horizontal, 12)
+            .sheet(isPresented: $showingReport) {
+                if let report = viewModel.weeklyReport {
+                    WeeklyReportView(report: report)
+                        .frame(width: 340, height: 420)
+                }
+            }
         }
         .padding(.vertical, 8)
     }

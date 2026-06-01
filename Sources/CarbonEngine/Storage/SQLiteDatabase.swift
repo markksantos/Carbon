@@ -5,22 +5,29 @@ import SQLite3
 #endif
 
 public actor SQLiteDatabase {
-    private nonisolated(unsafe) var db: OpaquePointer?
+    private nonisolated(unsafe) let db: OpaquePointer
 
-    public init(path: String) throws {
+    /// Use `SQLiteDatabase.open(path:)` to create an instance.
+    private init(db: OpaquePointer) {
+        self.db = db
+    }
+
+    public static func open(path: String) throws -> SQLiteDatabase {
         let dir = (path as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(
             atPath: dir, withIntermediateDirectories: true
         )
-        guard sqlite3_open(path, &db) == SQLITE_OK else {
-            let msg = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
+        var dbPtr: OpaquePointer?
+        guard sqlite3_open(path, &dbPtr) == SQLITE_OK, let dbPtr else {
+            let msg = dbPtr.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
             throw DBError.openFailed(msg)
         }
-        // WAL mode — use raw C call in init (actor not yet fully initialized)
+        sqlite3_busy_timeout(dbPtr, 5000)
         var walErr: UnsafeMutablePointer<CChar>?
-        if sqlite3_exec(db, "PRAGMA journal_mode=WAL", nil, nil, &walErr) != SQLITE_OK {
+        if sqlite3_exec(dbPtr, "PRAGMA journal_mode=WAL", nil, nil, &walErr) != SQLITE_OK {
             sqlite3_free(walErr)
         }
+        return SQLiteDatabase(db: dbPtr)
     }
 
     deinit {
@@ -39,7 +46,7 @@ public actor SQLiteDatabase {
     public func query(_ sql: String, params: [Any] = []) throws -> [[String: String]] {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            let msg = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
+            let msg = String(cString: sqlite3_errmsg(db))
             throw DBError.prepareFailed(msg)
         }
         defer { sqlite3_finalize(stmt) }
@@ -64,7 +71,7 @@ public actor SQLiteDatabase {
     public func insert(_ sql: String, params: [Any] = []) throws {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
-            let msg = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
+            let msg = String(cString: sqlite3_errmsg(db))
             throw DBError.prepareFailed(msg)
         }
         defer { sqlite3_finalize(stmt) }
@@ -72,10 +79,32 @@ public actor SQLiteDatabase {
         bindParams(stmt: stmt, params: params)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
-            let msg = db.flatMap { String(cString: sqlite3_errmsg($0)) } ?? "unknown"
+            let msg = String(cString: sqlite3_errmsg(db))
             throw DBError.execFailed(msg)
         }
     }
+
+    // MARK: - Transactions
+
+    public func beginTransaction() throws {
+        try execute("BEGIN IMMEDIATE")
+    }
+
+    public func commitTransaction() throws {
+        try execute("COMMIT")
+    }
+
+    public func rollbackTransaction() throws {
+        try execute("ROLLBACK")
+    }
+
+    // MARK: - Bulk Operations
+
+    public func deleteAll(table: String) throws {
+        try execute("DELETE FROM \(table)")
+    }
+
+    // MARK: - Private
 
     private func bindParams(stmt: OpaquePointer?, params: [Any]) {
         for (i, param) in params.enumerated() {

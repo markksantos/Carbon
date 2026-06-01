@@ -109,7 +109,10 @@ public actor ProcessEnergyTracker {
         guard let prev = previousSamples[pid] else { return 0 }
         let deltaTicks = totalTicks > prev.totalCPUTicks ? totalTicks - prev.totalCPUTicks : 0
         let deltaCPUSeconds = timeConverter.seconds(fromTicks: deltaTicks)
-        return (deltaCPUSeconds / deltaTime) * 100.0
+        let raw = (deltaCPUSeconds / deltaTime) * 100.0
+        // Clamp to theoretical max to prevent bogus readings after sleep/wake
+        let maxPercent = Double(chipInfo.cpuCoreCount) * 100.0
+        return min(raw, maxPercent)
     }
 
     private func cpuPercentToWatts(_ cpuPercent: Double) -> Double {

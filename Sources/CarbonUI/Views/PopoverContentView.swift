@@ -11,6 +11,12 @@ public struct PopoverContentView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            if viewModel.gpuUtilization > 0 {
+                GPUInfoView(
+                    utilization: viewModel.gpuUtilization,
+                    watts: viewModel.systemSnapshot?.gpuWatts ?? 0
+                )
+            }
             Divider()
             tabPicker
             Divider()
@@ -19,6 +25,7 @@ public struct PopoverContentView: View {
             footer
         }
         .frame(width: 340)
+        .background(.clear)
     }
 
     // MARK: - Sections
@@ -28,7 +35,7 @@ public struct PopoverContentView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Energy Monitor")
                     .font(.headline)
-                Text(viewModel.chipInfo.chipFamily.rawValue)
+                Text(viewModel.chipInfo.displayName)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -37,6 +44,8 @@ public struct PopoverContentView: View {
                 Text(String(format: "%.1f W", viewModel.totalWatts))
                     .font(.title2.monospacedDigit())
                     .fontWeight(.semibold)
+                    .contentTransition(.numericText())
+                    .animation(.snappy, value: viewModel.totalWatts)
                 if viewModel.gpuUtilization > 0 {
                     Text(String(format: "GPU %.0f%%", viewModel.gpuUtilization))
                         .font(.caption)
@@ -69,7 +78,7 @@ public struct PopoverContentView: View {
             if let snapshot = viewModel.systemSnapshot, !snapshot.appSnapshots.isEmpty {
                 AppListView(apps: snapshot.appSnapshots)
             } else {
-                placeholder("Measuring...")
+                measuringPlaceholder
             }
         case .today:
             if viewModel.dailySummaries.isEmpty {
@@ -83,7 +92,8 @@ public struct PopoverContentView: View {
             } else {
                 WeeklySummaryView(
                     dailyTotals: viewModel.weeklySummaries,
-                    carbonIntensity: viewModel.carbonIntensity
+                    carbonIntensity: viewModel.carbonIntensity,
+                    viewModel: viewModel
                 )
             }
         }
@@ -103,18 +113,28 @@ public struct PopoverContentView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if let lastUpdated = viewModel.lastUpdated {
+                Text(lastUpdated, style: .relative)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
             Text(viewModel.regionCode)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Button("Quit") {
-                NSApplication.shared.terminate(nil)
-            }
-            .buttonStyle(.plain)
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    private var measuringPlaceholder: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Measuring...")
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.vertical, 24)
     }
 
     private func placeholder(_ text: String) -> some View {

@@ -10,7 +10,13 @@ struct ChipInfoTests {
         #expect(!info.brandString.isEmpty)
         #expect(info.cpuCoreCount > 0)
         #expect(info.tdpWatts > 0)
-        #expect(info.chipFamily != .unknown)
+        // On Apple Silicon the generation should be detected; on Intel/CI
+        // runners it may not be, so only assert detection when running on
+        // a recognized Apple chip.
+        if info.brandString.lowercased().contains("apple") {
+            #expect(info.isAppleSilicon)
+            #expect(info.displayName != "Unknown")
+        }
     }
 
     @Test("TDP values are reasonable")
@@ -18,6 +24,36 @@ struct ChipInfoTests {
         let info = ChipInfo.detect()
         #expect(info.tdpWatts >= 10 && info.tdpWatts <= 80)
         #expect(info.gpuBaseTDP >= 10 && info.gpuBaseTDP <= 80)
+    }
+
+    @Test("Forward-compatible chip parsing")
+    func parsing() {
+        #expect(ChipInfo.parse("Apple M1").generation == 1)
+        #expect(ChipInfo.parse("Apple M1").tier == .base)
+        #expect(ChipInfo.parse("Apple M2 Pro").generation == 2)
+        #expect(ChipInfo.parse("Apple M2 Pro").tier == .pro)
+        #expect(ChipInfo.parse("Apple M3 Max").tier == .max)
+        #expect(ChipInfo.parse("Apple M2 Ultra").tier == .ultra)
+        // Future chip recognized without a code change
+        #expect(ChipInfo.parse("Apple M5 Max").generation == 5)
+        #expect(ChipInfo.parse("Apple M5 Max").tier == .max)
+        #expect(ChipInfo.parse("Apple M12").generation == 12)
+        // Non-Apple-Silicon brand → unknown
+        #expect(ChipInfo.parse("Intel Core i9").generation == 0)
+    }
+
+    @Test("Display name formatting")
+    func displayName() {
+        let m5max = ChipInfo(
+            brandString: "Apple M5 Max", generation: 5, tier: .max,
+            tdpWatts: 30, cpuCoreCount: 18, gpuBaseTDP: 40
+        )
+        #expect(m5max.displayName == "M5 Max")
+        let m1 = ChipInfo(
+            brandString: "Apple M1", generation: 1, tier: .base,
+            tdpWatts: 10, cpuCoreCount: 8, gpuBaseTDP: 10
+        )
+        #expect(m1.displayName == "M1")
     }
 }
 
@@ -101,6 +137,56 @@ struct ProcessEnumeratorTests {
         let enumerator = ProcessEnumerator()
         let processes = enumerator.listAll()
         #expect(processes.count > 10) // macOS always has many processes
+    }
+}
+
+@Suite("WeeklyReportGenerator")
+struct WeeklyReportGeneratorTests {
+    private func totals() -> [DailyTotal] {
+        [
+            DailyTotal(date: .now, wattHours: 100, co2Grams: 37),
+            DailyTotal(date: .now.addingTimeInterval(-86400), wattHours: 50, co2Grams: 18.5),
+        ]
+    }
+
+    @Test("Sums daily totals into report")
+    func sumsTotals() {
+        let report = WeeklyReportGenerator().generate(
+            dailyTotals: totals(), topConsumers: [], previousWeekWh: nil, suggestions: []
+        )
+        #expect(report.totalWh == 150)
+        #expect(abs(report.totalCO2Grams - 55.5) < 0.01)
+        #expect(report.changeFromPreviousWeek == nil)
+    }
+
+    @Test("Computes week-over-week increase")
+    func computesIncrease() {
+        // This week 150 Wh, last week 100 Wh → +50%
+        let report = WeeklyReportGenerator().generate(
+            dailyTotals: totals(), topConsumers: [], previousWeekWh: 100, suggestions: []
+        )
+        #expect(report.changeFromPreviousWeek != nil)
+        #expect(abs((report.changeFromPreviousWeek ?? 0) - 50) < 0.01)
+    }
+
+    @Test("Computes week-over-week decrease")
+    func computesDecrease() {
+        // This week 150 Wh, last week 300 Wh → -50%
+        let report = WeeklyReportGenerator().generate(
+            dailyTotals: totals(), topConsumers: [], previousWeekWh: 300, suggestions: []
+        )
+        #expect(abs((report.changeFromPreviousWeek ?? 0) + 50) < 0.01)
+    }
+
+    @Test("Limits top consumers to 5")
+    func limitsConsumers() {
+        let consumers = (0..<10).map {
+            AppCarbonSummary(appName: "App\($0)", bundleId: "com.test.\($0)", wattHours: 10, co2Grams: 3)
+        }
+        let report = WeeklyReportGenerator().generate(
+            dailyTotals: totals(), topConsumers: consumers, previousWeekWh: nil, suggestions: []
+        )
+        #expect(report.topConsumers.count == 5)
     }
 }
 

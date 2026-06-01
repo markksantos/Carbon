@@ -7,6 +7,7 @@ public final class CarbonViewModel {
     public var systemSnapshot: SystemEnergySnapshot?
     public var totalWatts: Double = 0
     public var chipInfo: ChipInfo
+    public var lastUpdated: Date?
 
     // Phase 2 properties
     public var selectedTab: Tab = .live
@@ -18,6 +19,7 @@ public final class CarbonViewModel {
     // Phase 3 properties
     public var suggestions: [EnergySuggestion] = []
     public var gpuUtilization: Double = 0
+    public var weeklyReport: WeeklyReport?
 
     private let tracker: ProcessEnergyTracker
     private let resolver: RunningAppResolver
@@ -34,6 +36,10 @@ public final class CarbonViewModel {
         case live = "Live"
         case today = "Today"
         case week = "Week"
+    }
+
+    public var databaseURL: URL? {
+        EnergyStore.databaseDirectoryURL
     }
 
     public init() {
@@ -79,6 +85,15 @@ public final class CarbonViewModel {
         isRunning = false
     }
 
+    public func pause() {
+        isRunning = false
+    }
+
+    public func resume() {
+        guard !isRunning else { return }
+        start()
+    }
+
     public func selectTab(_ tab: Tab) {
         selectedTab = tab
         if tab == .today {
@@ -91,6 +106,32 @@ public final class CarbonViewModel {
     public func updateRegion(_ code: String) {
         regionCode = code
         carbonIntensity = CarbonIntensityTable.intensity(for: code)
+    }
+
+    public func clearAllData() async {
+        guard let store else { return }
+        do {
+            try await store.deleteAllSamples()
+            dailySummaries = []
+            weeklySummaries = []
+            weeklyReport = nil
+        } catch {
+            print("Carbon: failed to clear data: \(error)")
+        }
+    }
+
+    public func generateWeeklyReport() async {
+        guard let store else { return }
+        let totals = await store.weeklyTotals(carbonIntensity: carbonIntensity)
+        let consumers = await store.dailySummaries(for: .now, carbonIntensity: carbonIntensity)
+        let previousWeekWh = await store.previousWeekTotalWh()
+        let generator = WeeklyReportGenerator()
+        weeklyReport = generator.generate(
+            dailyTotals: totals,
+            topConsumers: consumers,
+            previousWeekWh: previousWeekWh,
+            suggestions: suggestions
+        )
     }
 
     // MARK: - Private
@@ -132,18 +173,22 @@ public final class CarbonViewModel {
             chipInfo: chipInfo
         )
         self.systemSnapshot = snapshot
+        self.lastUpdated = .now
 
-        // Phase 2: flush to storage every 5 minutes
+        // Phase 2: flush to storage every 5 minutes (batched)
         if let store, Date.now.timeIntervalSince(lastFlush) >= 300 {
-            for app in appSnapshots {
-                await store.recordSample(
-                    appName: app.name,
-                    bundleId: app.bundleIdentifier ?? app.name,
-                    cpuWatts: app.estimatedWatts,
-                    gpuWatts: app.gpuWatts,
-                    durationSeconds: 5.0,
-                    regionCode: regionCode
-                )
+            let batch = appSnapshots.map { app in
+                (appName: app.name,
+                 bundleId: app.bundleIdentifier ?? app.name,
+                 cpuWatts: app.estimatedWatts,
+                 gpuWatts: app.gpuWatts,
+                 durationSeconds: 5.0,
+                 regionCode: regionCode)
+            }
+            do {
+                try await store.recordBatch(batch)
+            } catch {
+                print("Carbon: failed to flush batch: \(error)")
             }
             lastFlush = .now
         }

@@ -4,12 +4,21 @@ import Foundation
 public actor EnergyStore {
     private let db: SQLiteDatabase
 
-    public init() async throws {
-        let appSupport = FileManager.default.urls(
+    public static let databaseDirectoryURL: URL? = {
+        FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
-        ).first!.appendingPathComponent("Carbon")
-        let dbPath = appSupport.appendingPathComponent("carbon.db").path
-        self.db = try SQLiteDatabase(path: dbPath)
+        ).first?.appendingPathComponent("Carbon")
+    }()
+
+    public init() async throws {
+        guard let appSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        ).first else {
+            throw StoreError.noAppSupportDirectory
+        }
+        let dir = appSupport.appendingPathComponent("Carbon")
+        let dbPath = dir.appendingPathComponent("carbon.db").path
+        self.db = try SQLiteDatabase.open(path: dbPath)
         try await db.execute("""
             CREATE TABLE IF NOT EXISTS energy_samples (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,17 +43,74 @@ public actor EnergyStore {
         gpuWatts: Double,
         durationSeconds: Double,
         regionCode: String
-    ) async {
+    ) async throws {
+        try await db.insert(
+            """
+            INSERT INTO energy_samples (app_name, bundle_id, timestamp, cpu_watts, gpu_watts, duration_seconds, region_code)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            params: [appName, bundleId, Date.now.timeIntervalSince1970, cpuWatts, gpuWatts, durationSeconds, regionCode]
+        )
+    }
+
+    public func recordBatch(
+        _ snapshots: [(appName: String, bundleId: String, cpuWatts: Double, gpuWatts: Double, durationSeconds: Double, regionCode: String)]
+    ) async throws {
+        try await db.beginTransaction()
         do {
-            try await db.insert(
-                """
-                INSERT INTO energy_samples (app_name, bundle_id, timestamp, cpu_watts, gpu_watts, duration_seconds, region_code)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                params: [appName, bundleId, Date.now.timeIntervalSince1970, cpuWatts, gpuWatts, durationSeconds, regionCode]
-            )
+            for app in snapshots {
+                try await db.insert(
+                    """
+                    INSERT INTO energy_samples (app_name, bundle_id, timestamp, cpu_watts, gpu_watts, duration_seconds, region_code)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    params: [app.appName, app.bundleId, Date.now.timeIntervalSince1970, app.cpuWatts, app.gpuWatts, app.durationSeconds, app.regionCode]
+                )
+            }
+            try await db.commitTransaction()
         } catch {
-            print("Carbon: failed to record sample: \(error)")
+            try? await db.rollbackTransaction()
+            throw error
+        }
+    }
+
+    public func deleteAllSamples() async throws {
+        try await db.deleteAll(table: "energy_samples")
+    }
+
+    /// Total Wh recorded during the 7-day window immediately preceding the
+    /// current week (i.e. days -13…-7). Used for the week-over-week comparison
+    /// in the weekly report. Returns `nil` when there is no prior-week data so
+    /// the report can suppress a misleading "0% vs last week" figure.
+    public func previousWeekTotalWh() async -> Double? {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: .now)
+        guard let currentWeekStart = calendar.date(byAdding: .day, value: -6, to: today),
+              let previousWeekStart = calendar.date(byAdding: .day, value: -7, to: currentWeekStart)
+        else { return nil }
+        let startTimestamp = previousWeekStart.timeIntervalSince1970
+        let endTimestamp = currentWeekStart.timeIntervalSince1970
+
+        do {
+            let rows = try await db.query(
+                """
+                SELECT SUM(cpu_watts * duration_seconds / 3600.0) as wh_cpu,
+                       SUM(gpu_watts * duration_seconds / 3600.0) as wh_gpu,
+                       COUNT(*) as sample_count
+                FROM energy_samples
+                WHERE timestamp >= ? AND timestamp < ?
+                """,
+                params: [startTimestamp, endTimestamp]
+            )
+            guard let row = rows.first,
+                  let count = row["sample_count"].flatMap(Int.init), count > 0
+            else { return nil }
+            let whCPU = row["wh_cpu"].flatMap(Double.init) ?? 0
+            let whGPU = row["wh_gpu"].flatMap(Double.init) ?? 0
+            return whCPU + whGPU
+        } catch {
+            print("Carbon: previous-week query failed: \(error)")
+            return nil
         }
     }
 
@@ -120,6 +186,10 @@ public actor EnergyStore {
             print("Carbon: weekly query failed: \(error)")
             return []
         }
+    }
+
+    public enum StoreError: Error, Sendable {
+        case noAppSupportDirectory
     }
 }
 

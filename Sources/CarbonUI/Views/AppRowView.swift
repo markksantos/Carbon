@@ -3,6 +3,7 @@ import CarbonEngine
 
 public struct AppRowView: View {
     let app: AppEnergySnapshot
+    @State private var isHovered = false
 
     public init(app: AppEnergySnapshot) {
         self.app = app
@@ -24,6 +25,7 @@ public struct AppRowView: View {
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 40, alignment: .trailing)
+                .contentTransition(.numericText())
 
             if app.gpuWatts > 0.01 {
                 Text(String(format: "+%.1fG", app.gpuWatts))
@@ -35,10 +37,19 @@ public struct AppRowView: View {
             Text(String(format: "%.1f W", app.totalWatts))
                 .font(.caption.monospacedDigit())
                 .frame(width: 50, alignment: .trailing)
+                .contentTransition(.numericText())
 
             EnergyBadge(impact: app.energyImpact)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.primary.opacity(isHovered ? 0.06 : 0))
+                .animation(.easeInOut(duration: 0.15), value: isHovered)
+        )
+        .onHover { hovering in
+            isHovered = hovering
+        }
     }
 }

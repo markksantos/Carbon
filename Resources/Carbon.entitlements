@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Carbon ships with the Hardened Runtime enabled (required for
+      notarization) but WITHOUT the App Sandbox.
+
+      The App Sandbox is intentionally omitted: proc_listallpids /
+      proc_pidinfo cannot enumerate other processes' CPU time from inside a
+      sandbox, which is the core of Carbon's per-app energy measurement.
+      This makes Carbon suitable for Developer ID (direct download)
+      distribution, not the Mac App Store.
+
+      No special Hardened Runtime exceptions are required — Carbon uses no
+      JIT, no unsigned executable memory, and loads no third-party plug-ins.
+    -->
+</dict>
+</plist>

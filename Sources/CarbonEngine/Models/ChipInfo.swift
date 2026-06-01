@@ -1,82 +1,144 @@
 import Foundation
 
+/// Describes the Apple Silicon chip powering this machine, including a
+/// thermal design power (TDP) estimate used to convert CPU/GPU utilization
+/// into watts.
+///
+/// Chip detection is forward compatible: rather than hardcoding a fixed list
+/// of chip families, it parses the generation number (M1, M2, …, M5, …) and
+/// the performance tier (base / Pro / Max / Ultra) directly from the CPU brand
+/// string. This means a brand-new chip (e.g. "Apple M5 Max") is recognized
+/// without a code change, falling back to sensible tier-based TDP values.
 public struct ChipInfo: Sendable {
     public let brandString: String
-    public let chipFamily: ChipFamily
+    public let generation: Int
+    public let tier: Tier
     public let tdpWatts: Double
     public let cpuCoreCount: Int
     public let gpuBaseTDP: Double
 
-    public enum ChipFamily: String, Sendable {
-        case m1 = "M1"
-        case m1Pro = "M1 Pro"
-        case m1Max = "M1 Max"
-        case m1Ultra = "M1 Ultra"
-        case m2 = "M2"
-        case m2Pro = "M2 Pro"
-        case m2Max = "M2 Max"
-        case m2Ultra = "M2 Ultra"
-        case m3 = "M3"
-        case m3Pro = "M3 Pro"
-        case m3Max = "M3 Max"
-        case m3Ultra = "M3 Ultra"
-        case m4 = "M4"
-        case m4Pro = "M4 Pro"
-        case m4Max = "M4 Max"
-        case m4Ultra = "M4 Ultra"
-        case unknown = "Unknown"
+    /// Performance tier within a generation. TDP scales with tier.
+    public enum Tier: String, Sendable, CaseIterable {
+        case base = ""
+        case pro = "Pro"
+        case max = "Max"
+        case ultra = "Ultra"
+    }
+
+    public init(
+        brandString: String,
+        generation: Int,
+        tier: Tier,
+        tdpWatts: Double,
+        cpuCoreCount: Int,
+        gpuBaseTDP: Double
+    ) {
+        self.brandString = brandString
+        self.generation = generation
+        self.tier = tier
+        self.tdpWatts = tdpWatts
+        self.cpuCoreCount = cpuCoreCount
+        self.gpuBaseTDP = gpuBaseTDP
+    }
+
+    /// Whether the chip generation was successfully identified.
+    public var isAppleSilicon: Bool { generation > 0 }
+
+    /// Human-readable chip name, e.g. "M5 Max", "M2", or "Unknown".
+    public var displayName: String {
+        guard isAppleSilicon else { return "Unknown" }
+        let base = "M\(generation)"
+        return tier == .base ? base : "\(base) \(tier.rawValue)"
     }
 
     public static func detect() -> ChipInfo {
         let brand = sysctlString("machdep.cpu.brand_string")
         let coreCount = sysctlInt("hw.ncpu")
-        let family = parseFamily(brand)
+        let (generation, tier) = parse(brand)
         return ChipInfo(
             brandString: brand,
-            chipFamily: family,
-            tdpWatts: tdpForFamily(family),
-            cpuCoreCount: coreCount,
-            gpuBaseTDP: gpuTDPForFamily(family)
+            generation: generation,
+            tier: tier,
+            tdpWatts: tdp(generation: generation, tier: tier),
+            cpuCoreCount: max(coreCount, 1),
+            gpuBaseTDP: gpuTDP(generation: generation, tier: tier)
         )
     }
 
-    private static func parseFamily(_ brand: String) -> ChipFamily {
-        let s = brand.lowercased()
-        // Check generations from newest to oldest; within each, most specific variant first
-        let generations: [(String, [(String, ChipFamily)])] = [
-            ("m4", [("ultra", .m4Ultra), ("max", .m4Max), ("pro", .m4Pro), ("", .m4)]),
-            ("m3", [("ultra", .m3Ultra), ("max", .m3Max), ("pro", .m3Pro), ("", .m3)]),
-            ("m2", [("ultra", .m2Ultra), ("max", .m2Max), ("pro", .m2Pro), ("", .m2)]),
-            ("m1", [("ultra", .m1Ultra), ("max", .m1Max), ("pro", .m1Pro), ("", .m1)]),
-        ]
-        for (gen, variants) in generations {
-            guard s.contains(gen) else { continue }
-            for (suffix, family) in variants {
-                if suffix.isEmpty || s.contains(suffix) {
-                    return family
+    /// Parse a brand string like "Apple M5 Max" into (generation, tier).
+    /// Returns (0, .base) when no Apple Silicon generation is found.
+    static func parse(_ brand: String) -> (generation: Int, tier: Tier) {
+        let lower = brand.lowercased()
+
+        // Find an "m<number>" token (m1, m2, …, m12). Use a regex-free scan so
+        // we don't depend on Foundation regex availability semantics.
+        var generation = 0
+        let scalars = Array(lower.unicodeScalars)
+        var i = 0
+        while i < scalars.count {
+            if scalars[i] == "m" {
+                // Token boundary: preceding char must be non-alphanumeric.
+                let prevOK = i == 0 || !isAlphaNum(scalars[i - 1])
+                var j = i + 1
+                var digits = ""
+                while j < scalars.count, CharacterSet.decimalDigits.contains(scalars[j]) {
+                    digits.unicodeScalars.append(scalars[j])
+                    j += 1
+                }
+                // Next char after digits must be a boundary (not a letter), so
+                // we don't match things like "mp3" or "html5".
+                let nextOK = j >= scalars.count || !isAlpha(scalars[j])
+                if prevOK, nextOK, let value = Int(digits), value > 0 {
+                    generation = value
+                    break
                 }
             }
+            i += 1
         }
-        return .unknown
+
+        let tier: Tier
+        if lower.contains("ultra") {
+            tier = .ultra
+        } else if lower.contains("max") {
+            tier = .max
+        } else if lower.contains("pro") {
+            tier = .pro
+        } else {
+            tier = .base
+        }
+
+        return (generation, tier)
     }
 
-    private static func tdpForFamily(_ family: ChipFamily) -> Double {
-        switch family {
-        case .m1, .m2, .m3, .m4:                     return 10
-        case .m1Pro, .m2Pro, .m3Pro, .m4Pro:          return 20
-        case .m1Max, .m2Max, .m3Max, .m4Max:          return 30
-        case .m1Ultra, .m2Ultra, .m3Ultra, .m4Ultra:  return 60
-        case .unknown:                                return 20
+    private static func isAlpha(_ s: Unicode.Scalar) -> Bool {
+        (s >= "a" && s <= "z") || (s >= "A" && s <= "Z")
+    }
+
+    private static func isAlphaNum(_ s: Unicode.Scalar) -> Bool {
+        isAlpha(s) || CharacterSet.decimalDigits.contains(s)
+    }
+
+    /// Tier-based CPU TDP estimate (watts). Values approximate the sustained
+    /// package power Apple Silicon draws under heavy CPU load and are stable
+    /// across generations, so future chips inherit reasonable defaults.
+    static func tdp(generation: Int, tier: Tier) -> Double {
+        guard generation > 0 else { return 20 } // unknown chip → Pro-ish default
+        switch tier {
+        case .base:  return 10
+        case .pro:   return 20
+        case .max:   return 30
+        case .ultra: return 60
         }
     }
 
-    private static func gpuTDPForFamily(_ family: ChipFamily) -> Double {
-        switch family {
-        case .m1, .m2, .m3, .m4:                     return 10
-        case .m1Pro, .m2Pro, .m3Pro, .m4Pro:          return 20
-        case .m1Max, .m2Max, .m3Max, .m4Max:          return 40
-        case .m1Ultra, .m2Ultra, .m3Ultra, .m4Ultra:  return 80
-        case .unknown:                                return 20
+    /// Tier-based GPU TDP estimate (watts).
+    static func gpuTDP(generation: Int, tier: Tier) -> Double {
+        guard generation > 0 else { return 20 }
+        switch tier {
+        case .base:  return 10
+        case .pro:   return 20
+        case .max:   return 40
+        case .ultra: return 80
         }
     }
 
