@@ -145,3 +145,57 @@ Minor non-blocking notes (left as-is to avoid over-engineering):
   distinguish 16" MacBooks. Acceptable as a documented heuristic.
 - GPU-per-app attribution is necessarily heuristic — macOS exposes only
   system-wide GPU utilization. Already documented in code.
+
+## QA Verification
+
+**Reviewer:** independent QA pass, 2026-05-31
+
+### Commands run
+
+```bash
+swift build                      # incremental (already cached)
+swift test                       # full test run
+swift build -c release           # release build
+rm -rf .build && swift build     # full clean rebuild
+git log --oneline origin/main..HEAD
+git ls-files dist/
+```
+
+### Results
+
+- **Clean rebuild (zero warnings):** confirmed. After wiping `.build`, full
+  recompile of all 43 compilation units completed with no warnings or errors.
+- **Tests:** 18 tests across 7 suites all pass (`WeeklyReportGenerator`,
+  `SuggestionEngine`, `CarbonCalculator`, `CarbonIntensityTable`, `ChipInfo`,
+  `MachTimeConverter`, `ProcessEnumerator`). Count matches the worklog claim.
+- **Release build:** clean (`Build complete!`).
+- **Commit count:** exactly 5 commits ahead of `origin/main` — matches claim.
+- **dist/ not tracked:** `git ls-files dist/` returns empty; .gitignore entries
+  for `dist/` and `Resources/AppIcon.icns` confirmed at lines 9–10.
+
+### Feature spot-checks
+
+| Claim | Verified |
+|---|---|
+| `EnergyStore.previousWeekTotalWh()` added | Yes — line 85 of EnergyStore.swift; real SQL query, nil-on-no-data path correct |
+| Wired into `CarbonViewModel.generateWeeklyReport` | Yes — lines 127 + 132 of CarbonViewModel.swift |
+| `WelcomeView.swift` present | Yes — Sources/CarbonUI/Views/WelcomeView.swift; UserDefaults gate + NSWindow presentation in AppDelegate confirmed |
+| `.github/workflows/ci.yml` present | Yes — macos-15, build+test+release+assemble+upload artifact |
+| 4 new WeeklyReportGenerator tests | Yes — @Test("Sums daily totals…"), @Test("…increase"), @Test("…decrease"), @Test("Limits top consumers to 5") |
+
+### Discrepancies
+
+None found. All worklog claims are accurate.
+
+### Fix applied
+
+None required — no build-breaking issues found.
+
+### Remaining issues (pre-deploy blockers)
+
+- Apple Developer Program membership + Developer ID Application certificate
+  required before public distribution. Unsigned bundle runs locally after
+  clearing quarantine.
+- `git push` + `v1.0` tag not done (intentional per overnight safety rules).
+- CI `xcode-select` targets `/Applications/Xcode_16.app`; CI will break if
+  macos-15 runner ships a different default Xcode path. Non-blocking locally.
