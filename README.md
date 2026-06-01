@@ -36,7 +36,7 @@
 - Xcode 16+ with Swift 6.0
 - Apple Silicon Mac (M1/M2/M3/M4)
 
-### Installation
+### Run from source (development)
 
 ```bash
 git clone https://github.com/markksantos/Carbon.git
@@ -45,9 +45,36 @@ swift build
 swift run
 ```
 
+A leaf icon and live wattage appear in your menu bar — click it to see the
+full breakdown. Right-click for Settings, About, and Quit. On first launch a
+short welcome panel explains what Carbon measures.
+
+### Build a distributable app
+
+`swift run` is great for development, but a menu bar app for everyday use wants
+a real `.app` bundle (with `LSUIElement`, an icon, and a proper Info.plist).
+The included script builds a release binary and wraps it — no Xcode project
+required:
+
+```bash
+scripts/build-app.sh
+open dist/Carbon.app
+```
+
+To produce a signed, notarization-ready bundle, pass a Developer ID identity:
+
+```bash
+CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" scripts/build-app.sh
+```
+
 ### Permissions
 
-Carbon reads process info via `proc_pidinfo` which works without special entitlements in debug builds. A leaf icon and live wattage will appear in your menu bar — click it to see the full breakdown.
+Carbon reads process info via `proc_pidinfo`, which works without special
+entitlements. It runs **outside the App Sandbox** (the sandbox can't enumerate
+other processes' CPU time) and ships with the **Hardened Runtime** enabled so
+it can be notarized for direct download. Carbon performs **no network access**
+and collects **no personal data** — everything stays on your Mac in
+`~/Library/Application Support/Carbon/`.
 
 ## Tech Stack
 
@@ -100,6 +127,7 @@ Carbon/
 │       ├── ViewModels/
 │       │   └── CarbonViewModel.swift
 │       └── Views/
+│           ├── WelcomeView.swift
 │           ├── AppIconView.swift
 │           ├── AppListView.swift
 │           ├── AppRowView.swift
@@ -115,6 +143,24 @@ Carbon/
     └── CarbonEngineTests/
         └── CarbonEngineTests.swift
 ```
+
+## Distribution
+
+Carbon is **not** a Mac App Store candidate — per-app energy measurement needs
+process enumeration that the App Sandbox forbids. Distribute it as a Developer
+ID–signed, notarized direct download:
+
+1. Build a signed bundle: `CODESIGN_IDENTITY="Developer ID Application: …" scripts/build-app.sh`
+2. Notarize: `xcrun notarytool submit dist/Carbon.app --keychain-profile "<profile>" --wait`
+3. Staple the ticket: `xcrun stapler staple dist/Carbon.app`
+4. Zip and attach to a GitHub release.
+
+A Developer ID certificate (Apple Developer Program membership) is required for
+steps 1–3; the unsigned bundle from `scripts/build-app.sh` runs locally after
+clearing the quarantine attribute.
+
+CI (`.github/workflows/ci.yml`) builds, tests, and uploads an **unsigned**
+`Carbon.app` artifact on every push and PR.
 
 ## License
 
