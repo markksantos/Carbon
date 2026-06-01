@@ -26,8 +26,17 @@
 - [x] ViewModel updates for GPU + suggestions
 - [x] Build + verify
 
+## Phase 4: Production hardening
+- [x] Wire week-over-week comparison (EnergyStore.previousWeekTotalWh → WeeklyReport)
+- [x] First-launch onboarding (WelcomeView, UserDefaults-gated)
+- [x] GitHub Actions CI (build + test + release + .app artifact)
+- [x] gitignore build output (dist/, generated AppIcon.icns)
+- [x] README: .app bundle build + distribution/notarization docs
+- [ ] Tag v1.0 release on GitHub (deferred — requires push, not done by overnight run)
+
 ## Results
-- 31 Swift files, ~1,640 non-blank/non-comment LOC
-- 12 tests passing (ChipInfo, MachTimeConverter, CarbonCalculator, CarbonIntensityTable, ProcessEnumerator, SuggestionEngine)
-- Clean build, zero warnings
-- App launches successfully as menu bar accessory
+- 32 Swift files, clean build, zero warnings (Swift 6.3 strict concurrency)
+- 18 tests passing in 7 suites (ChipInfo, MachTimeConverter, CarbonCalculator,
+  CarbonIntensityTable, ProcessEnumerator, SuggestionEngine, WeeklyReportGenerator)
+- App launches successfully as menu bar accessory; SQLite persistence verified
+- scripts/build-app.sh produces a working ad-hoc-signed Carbon.app bundle
