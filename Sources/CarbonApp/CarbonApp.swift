@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var eventMonitor: Any?
+    private var welcomeWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -66,6 +67,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         observeViewModel()
+
+        if !WelcomeView.hasSeenWelcome {
+            showWelcomeWindow()
+        }
+    }
+
+    // MARK: - First-launch onboarding
+
+    private func showWelcomeWindow() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 380, height: 460),
+            styleMask: [.titled, .closable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
+        window.center()
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: WelcomeView { [weak self] in
+            WelcomeView.hasSeenWelcome = true
+            self?.welcomeWindow?.close()
+            self?.welcomeWindow = nil
+        })
+        welcomeWindow = window
+
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
     }
 
     // MARK: - Sleep / Wake
