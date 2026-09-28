@@ -76,6 +76,10 @@ it can be notarized for direct download. Carbon performs **no network access**
 and collects **no personal data** — everything stays on your Mac in
 `~/Library/Application Support/Carbon/`.
 
+## How It Works
+
+> **Write-up:** [Per-app power on Apple silicon: Mach ticks and ri_energy_nj](https://nosleeplab.com/notes/per-app-power-apple-silicon-mach-ticks-ri-energy-nj) — how the per-app watts are estimated, and the kernel energy counter that could replace the model.
+
 ## Tech Stack
 
 | Component | Technology |
